@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>个人聚合影视 - 智能搜索与高清解析</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
+</head>
+<body>
+  <!-- 顶部导航栏 -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand">
+        <span class="logo-icon">🎬</span>
+        <span class="logo-text">极光影院 <span class="badge-pro">PRO</span></span>
+      </div>
+
+      <!-- 快速直连播放与线路切换 -->
+      <div class="nav-tools">
+        <div class="route-selector">
+          <label for="routeSelect">解析线路：</label>
+          <select id="routeSelect" class="custom-select">
+            <option value="https://jx.xmflv.com/?url=" selected>线路 1：XMFLV 解析 (推荐，带选集)</option>
+            <option value="https://jx.nnxv.cn/tv.php?url=">线路 2：通用纯净备用</option>
+            <option value="https://www.ckplayer.vip/jiexi/?url=">线路 3：CKPlayer 高清备用</option>
+            <option value="https://jx.jsonplayer.com/player/?url=">线路 4：JSONPlayer 备用</option>
+          </select>
+        </div>
+
+        <div class="direct-play-box">
+          <input type="text" id="directUrlInput" placeholder="粘贴腾讯/优酷/爱奇艺播放链接直接看..." />
+          <button id="directPlayBtn" class="btn btn-accent">直接解析</button>
+        </div>
+
+        <button id="toggleHistoryBtn" class="btn btn-outline" title="播放历史">
+          <span class="icon">🕒</span> 历史记录
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 沉浸式影院播放区 (默认隐藏，点击播放时平滑展开) -->
+  <section id="playerSection" class="player-section hidden">
+    <div class="player-container">
+      <div class="player-header">
+        <div class="player-info">
+          <span id="playerPlatformBadge" class="platform-badge badge-all">来源平台</span>
+          <h2 id="playerVideoTitle" class="video-title">正在播放...</h2>
+        </div>
+        <div class="player-actions">
+          <button id="refreshPlayerBtn" class="btn-icon" title="刷新重载">🔄 刷新</button>
+          <button id="openOriginalBtn" class="btn-icon" title="在原平台新标签页打开">🔗 原站页面</button>
+          <button id="closePlayerBtn" class="btn-icon btn-danger" title="关闭播放器">✕ 关闭</button>
+        </div>
+      </div>
+
+      <!-- 16:9 响应式播放器容器 -->
+      <div class="iframe-wrapper">
+        <iframe id="videoIframe" allowfullscreen="true" allowtransparency="true" frameborder="0" scrolling="no"></iframe>
+      </div>
+
+      <div class="player-tip">
+        <span>💡 提示：播放器自带各平台选集功能，若遇到卡顿或黑屏可尝试在顶部切换备用解析线路。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主体内容容器 -->
+  <main class="main-content">
+    <!-- 搜索 Hero 区域 -->
+    <section class="search-hero">
+      <h1 class="hero-title">全网聚合搜索 · 一键极速解析</h1>
+      <p class="hero-subtitle">智能检索腾讯视频、爱奇艺、优酷精彩影视资源，自动抓取正片直连解析</p>
+
+      <!-- 平台筛选标签 -->
+      <div class="platform-tabs" id="platformTabs">
+        <button class="tab-btn active" data-platform="all">🌐 全网聚合</button>
+        <button class="tab-btn" data-platform="qq">🐧 腾讯视频</button>
+        <button class="tab-btn" data-platform="iqiyi">🥝 爱奇艺</button>
+        <button class="tab-btn" data-platform="youku">👑 优酷</button>
+      </div>
+
+      <!-- 搜索栏 -->
+      <div class="search-box">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput" placeholder="输入电视剧、电影、动漫或综艺名称（如：庆余年、狂飙、繁花...）" autocomplete="off" />
+          <button id="clearSearchBtn" class="clear-btn hidden">✕</button>
+        </div>
+        <button id="searchBtn" class="btn btn-primary">
+          <span class="btn-text">立即搜索</span>
+          <span class="btn-loader hidden"></span>
+        </button>
+      </div>
+
+      <!-- 热门快捷推荐 -->
+      <div class="hot-keywords">
+        <span class="hot-label">🔥 热门搜索：</span>
+        <button class="hot-tag">庆余年</button>
+        <button class="hot-tag">狂飙</button>
+        <button class="hot-tag">繁花</button>
+        <button class="hot-tag">甄嬛传</button>
+        <button class="hot-tag">三体</button>
+        <button class="hot-tag">长相思</button>
+        <button class="hot-tag">雪中悍刀行</button>
+      </div>
+    </section>
+
+    <!-- 搜索结果区 -->
+    <section class="results-section">
+      <div class="section-header">
+        <h2 id="resultsHeading" class="section-title">搜索结果</h2>
+        <span id="resultsCount" class="results-count"></span>
+      </div>
+
+      <!-- 骨架加载屏 -->
+      <div id="loadingSkeleton" class="results-grid hidden">
+        <div class="skeleton-card"><div class="skeleton-poster"></div><div class="skeleton-text"></div><div class="skeleton-subtext"></div></div>
+        <div class="skeleton-card"><div class="skeleton-poster"></div><div class="skeleton-text"></div><div class="skeleton-subtext"></div></div>
+        <div class="skeleton-card"><div class="skeleton-poster"></div><div class="skeleton-text"></div><div class="skeleton-subtext"></div></div>
+        <div class="skeleton-card"><div class="skeleton-poster"></div><div class="skeleton-text"></div><div class="skeleton-subtext"></div></div>
+      </div>
+
+      <!-- 结果卡片网格 -->
+      <div id="resultsGrid" class="results-grid"></div>
+
+      <!-- 空状态与欢迎展示 -->
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">📺</div>
+        <h3>准备好观影了吗？</h3>
+        <p>在上方搜索框输入任意片名，或直接粘贴第三方视频地址即可开启高清视听体验。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- 历史记录侧边抽屉 -->
+  <div id="historyDrawer" class="drawer">
+    <div class="drawer-overlay" id="drawerOverlay"></div>
+    <div class="drawer-content">
+      <div class="drawer-header">
+        <h3>🕒 观看历史</h3>
+        <div class="drawer-actions">
+          <button id="clearHistoryBtn" class="btn-text-danger">清空</button>
+          <button id="closeDrawerBtn" class="btn-icon">✕</button>
+        </div>
+      </div>
+      <div id="historyList" class="history-list">
+        <!-- 动态渲染历史列表 -->
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
