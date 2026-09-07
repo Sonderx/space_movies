@@ -74,12 +74,15 @@ async def search_videos(
     
     # 若指定腾讯视频且未搜到，或者用户显式开启 deep 模式
     if (deep or (platform == "qq" and len(results) == 0)):
-        pw_results = await search_tencent_playwright(q.strip())
-        if pw_results:
-            existing_urls = {it["url"] for it in results}
-            for item in pw_results:
-                if item["url"] not in existing_urls:
-                    results.append(item)
+        try:
+            pw_results = await search_tencent_playwright(q.strip())
+            if pw_results:
+                existing_urls = {it["url"] for it in results}
+                for item in pw_results:
+                    if item["url"] not in existing_urls:
+                        results.append(item)
+        except Exception as e:
+            print(f"[Search Engine] Playwright fallback error: {e}")
 
     return {
         "code": 200,

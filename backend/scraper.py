@@ -91,71 +91,80 @@ async def search_aggregated(keyword: str, platform: str = "all") -> List[Dict[st
         "mgtv": ("imgo", "芒果TV")
     }
 
-    try:
-        url = f"https://api.so.360kan.com/index?force_act=1&kw={urllib.parse.quote(keyword)}&from="
-        async with httpx.AsyncClient(headers=HEADERS, timeout=8.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                rows = data.get("data", {}).get("longData", {}).get("rows", [])
-                
-                for r in rows:
-                    raw_title = clean_html_tags(r.get("title", ""))
-                    cover = r.get("cover", "")
-                    cat_name = r.get("cat_name", "影视")
-                    desc = clean_html_tags(r.get("desc") or r.get("act") or "")
-                    year = r.get("year", "")
-                    playlinks = r.get("playlinks", {})
+    for attempt in range(2):
+        try:
+            url = f"https://api.so.360kan.com/index?force_act=1&kw={urllib.parse.quote(keyword)}&from="
+            async with httpx.AsyncClient(headers=HEADERS, timeout=10.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    data_obj = data.get("data")
+                    rows = []
+                    if isinstance(data_obj, dict):
+                        long_data = data_obj.get("longData")
+                        if isinstance(long_data, dict):
+                            rows = long_data.get("rows", [])
+                    
+                    for r in rows:
+                        raw_title = clean_html_tags(r.get("title", ""))
+                        cover = r.get("cover", "")
+                        cat_name = r.get("cat_name", "影视")
+                        desc = clean_html_tags(r.get("desc") or r.get("act") or "")
+                        year = r.get("year", "")
+                        playlinks = r.get("playlinks", {})
 
-                    # 如果用户指定了单平台
-                    if platform != "all":
-                        target_key = "qiyi" if platform == "iqiyi" else platform
-                        if target_key in playlinks:
-                            link_data = playlinks[target_key]
-                            final_url = ""
-                            if isinstance(link_data, str):
-                                final_url = link_data
-                            elif isinstance(link_data, list) and len(link_data) > 0:
-                                final_url = link_data[0].get("url", "")
-                            
-                            if final_url:
-                                final_url = normalize_play_url(final_url)
-                                p_display_name = "爱奇艺" if platform == "iqiyi" else ("腾讯视频" if platform == "qq" else "优酷")
-                                results.append({
-                                    "title": raw_title,
-                                    "url": final_url,
-                                    "cover": cover,
-                                    "desc": desc,
-                                    "category": cat_name,
-                                    "platform": platform,
-                                    "platform_name": p_display_name,
-                                    "year": year
-                                })
-                    else:
-                        # 全网聚合模式：遍历三大主流平台
-                        for p_key, (source_key, p_display) in platform_code_map.items():
-                            if source_key in playlinks:
-                                link_data = playlinks[source_key]
+                        # 如果用户指定了单平台
+                        if platform != "all":
+                            target_key = "qiyi" if platform == "iqiyi" else platform
+                            if target_key in playlinks:
+                                link_data = playlinks[target_key]
                                 final_url = ""
                                 if isinstance(link_data, str):
                                     final_url = link_data
                                 elif isinstance(link_data, list) and len(link_data) > 0:
                                     final_url = link_data[0].get("url", "")
-
+                                
                                 if final_url:
                                     final_url = normalize_play_url(final_url)
+                                    p_display_name = "爱奇艺" if platform == "iqiyi" else ("腾讯视频" if platform == "qq" else "优酷")
                                     results.append({
                                         "title": raw_title,
                                         "url": final_url,
                                         "cover": cover,
                                         "desc": desc,
                                         "category": cat_name,
-                                        "platform": p_key,
-                                        "platform_name": p_display,
+                                        "platform": platform,
+                                        "platform_name": p_display_name,
                                         "year": year
                                     })
-    except Exception as e:
-        print(f"[Search Engine] Aggregate search error: {e}")
+                        else:
+                            # 全网聚合模式：遍历三大主流平台
+                            for p_key, (source_key, p_display) in platform_code_map.items():
+                                if source_key in playlinks:
+                                    link_data = playlinks[source_key]
+                                    final_url = ""
+                                    if isinstance(link_data, str):
+                                        final_url = link_data
+                                    elif isinstance(link_data, list) and len(link_data) > 0:
+                                        final_url = link_data[0].get("url", "")
+
+                                    if final_url:
+                                        final_url = normalize_play_url(final_url)
+                                        results.append({
+                                            "title": raw_title,
+                                            "url": final_url,
+                                            "cover": cover,
+                                            "desc": desc,
+                                            "category": cat_name,
+                                            "platform": p_key,
+                                            "platform_name": p_display,
+                                            "year": year
+                                        })
+                    break
+        except Exception as e:
+            if attempt == 1:
+                print(f"[Search Engine] Aggregate search error: {e}")
+            await asyncio.sleep(0.3)
 
     # 如果指定爱奇艺平台或者全网聚合但结果较少，补充爱奇艺直连检索
     if (platform in ("all", "iqiyi")) and len(results) < 3:
@@ -202,9 +211,14 @@ async def search_iqiyi_direct(keyword: str) -> List[Dict[str, Any]]:
 
 async def search_tencent_playwright(keyword: str) -> List[Dict[str, Any]]:
     """
-    使用 Playwright 无头浏览器深入抓取腾讯视频精准检索卡片
+    使用 Playwright 无头浏览器深入抓取腾讯视频精准检索卡片（可选降级）
     """
-    from playwright.async_api import async_playwright
+    try:
+        from playwright.async_api import async_playwright
+    except (ImportError, ModuleNotFoundError):
+        print("[Playwright Tencent] Playwright not installed or excluded in build, skipping.")
+        return []
+
     results = []
     try:
         async with async_playwright() as p:
