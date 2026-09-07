@@ -63,8 +63,28 @@
       <div class="player-tip">
         <span>💡 提示：播放器自带各平台选集功能，若遇到卡顿或黑屏可尝试在顶部切换备用解析线路。</span>
       </div>
+
+      <!-- 剧集选集区域 (多集资源自动展现) -->
+      <div id="episodesSection" class="episodes-section hidden">
+        <div class="episodes-header">
+          <div class="episodes-header-left">
+            <span class="episodes-badge-icon">📑</span>
+            <span class="episodes-title">剧集选集</span>
+            <span id="episodesTotalBadge" class="episodes-total">共 0 集</span>
+          </div>
+          <div class="episodes-header-right">
+            <span id="currentEpisodeStatus" class="current-episode-status">正在播放：第 1 集</span>
+          </div>
+        </div>
+        <div id="episodesGrid" class="episodes-grid">
+          <!-- 动态渲染集数按钮 -->
+        </div>
+      </div>
     </div>
   </section>
+
+  <!-- 全局轻提示 Toast -->
+  <div id="toastNotification" class="toast-notification hidden"></div>
 
   <!-- 主体内容容器 -->
   <main class="main-content">

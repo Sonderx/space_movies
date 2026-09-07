@@ -29,6 +29,7 @@ env/
 # Packaging & Compressed files (Uploaded to GitHub Release instead)
 *.zip
 *.tar.gz
+*.exe
 
 # System files
 .DS_Store

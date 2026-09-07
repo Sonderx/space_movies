@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import subprocess
 from pathlib import Path
@@ -15,12 +15,22 @@ def build():
     frontend_dir = root_dir / "frontend"
     backend_dir = root_dir / "backend"
 
+    target_name = "极光影院"
+    exe_path = root_dir / "dist" / f"{target_name}.exe"
+    if exe_path.exists():
+        try:
+            with open(exe_path, "ab"):
+                pass
+        except PermissionError:
+            target_name = "极光影院_最新版"
+            print(f"[提示] 原 dist/极光影院.exe 正在运行中，本次将自动生成为 dist/{target_name}.exe")
+
     cmd = [
         str(root_dir / ".venv" / "Scripts" / "pyinstaller.exe"),
         "--noconfirm",
         "--clean",
         "--onefile",
-        "--name", "极光影院",
+        "--name", target_name,
         "--add-data", f"{frontend_dir};frontend",
         "--add-data", f"{backend_dir};backend",
         "--hidden-import", "uvicorn",

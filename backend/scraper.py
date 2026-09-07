@@ -72,9 +72,33 @@ async def resolve_album_to_play_url(url: str) -> str:
             print(f"[Resolver] iQiyi album resolve error: {e}")
     return url
 
+async def fetch_qq_episodes(cid_or_url: str) -> List[Dict[str, str]]:
+    """
+    通过腾讯视频接口获取完整分集列表（正序从第1集开始）
+    """
+    if not cid_or_url:
+        return []
+    cid = cid_or_url
+    m = re.search(r'/cover/([a-zA-Z0-9]+)', cid_or_url)
+    if m:
+        cid = m.group(1)
+        
+    for proto in ["http", "https"]:
+        try:
+            url = f"{proto}://node.video.qq.com/x/api/float_vinfo2?cid={cid}"
+            async with httpx.AsyncClient(timeout=3.5) as client:
+                r = await client.get(url, headers=HEADERS)
+                if r.status_code == 200:
+                    vids = r.json().get("c", {}).get("video_ids", [])
+                    if vids:
+                        return [{"title": f"第{i+1}集", "url": f"https://v.qq.com/x/cover/{cid}/{vid}.html"} for i, vid in enumerate(vids)]
+        except Exception:
+            continue
+    return []
+
 async def search_aggregated(keyword: str, platform: str = "all") -> List[Dict[str, Any]]:
     """
-    极速聚合检索各大平台影视资源
+    极速聚合检索各大平台影视资源，默认返回第 1 集与分集列表
     platform: 'all' | 'qq' | 'iqiyi' | 'youku'
     """
     results: List[Dict[str, Any]] = []
@@ -112,54 +136,80 @@ async def search_aggregated(keyword: str, platform: str = "all") -> List[Dict[st
                         desc = clean_html_tags(r.get("desc") or r.get("act") or "")
                         year = r.get("year", "")
                         playlinks = r.get("playlinks", {})
+                        series_playlinks = r.get("seriesPlaylinks", [])
+                        series_site = r.get("seriesSite", "")
+
+                        # 抽取平台视频信息的内部辅助函数
+                        async def build_item(p_key: str, s_key: str, p_display: str) -> Optional[Dict[str, Any]]:
+                            if s_key not in playlinks:
+                                return None
+                            link_data = playlinks[s_key]
+                            raw_url = ""
+                            if isinstance(link_data, str):
+                                raw_url = link_data
+                            elif isinstance(link_data, list) and len(link_data) > 0:
+                                raw_url = link_data[0].get("url", "")
+
+                            if not raw_url:
+                                return None
+
+                            episodes: List[Dict[str, str]] = []
+
+                            # 1. 检查 360kan 剧集列表
+                            if series_playlinks and (series_site == s_key or not series_site):
+                                for i, it in enumerate(series_playlinks):
+                                    ep_url = it.get("url") if isinstance(it, dict) else it
+                                    if ep_url:
+                                        episodes.append({
+                                            "title": f"第{i+1}集",
+                                            "url": normalize_play_url(ep_url)
+                                        })
+
+                            # 2. 如果是腾讯视频且尚无选集列表，尝试从腾讯官方拉取正序分集
+                            if not episodes and (p_key == "qq" or s_key == "qq") and "v.qq.com" in raw_url:
+                                qq_eps = await fetch_qq_episodes(raw_url)
+                                if qq_eps:
+                                    episodes = qq_eps
+
+                            # 默认第1集地址：如果有分集则取第1集；否则去除腾讯特定单集vid保留专辑根路径，避免锁定末集
+                            if episodes:
+                                default_url = episodes[0]["url"]
+                            else:
+                                if "v.qq.com" in raw_url:
+                                    m_cid = re.search(r'/cover/([a-zA-Z0-9]+)', raw_url)
+                                    if m_cid:
+                                        default_url = f"https://v.qq.com/x/cover/{m_cid.group(1)}.html"
+                                    else:
+                                        default_url = normalize_play_url(raw_url)
+                                else:
+                                    default_url = normalize_play_url(raw_url)
+
+                            return {
+                                "title": raw_title,
+                                "url": default_url,
+                                "first_episode_url": default_url,
+                                "episodes": episodes,
+                                "cover": cover,
+                                "desc": desc,
+                                "category": cat_name,
+                                "platform": p_key,
+                                "platform_name": p_display,
+                                "year": year
+                            }
 
                         # 如果用户指定了单平台
                         if platform != "all":
                             target_key = "qiyi" if platform == "iqiyi" else platform
-                            if target_key in playlinks:
-                                link_data = playlinks[target_key]
-                                final_url = ""
-                                if isinstance(link_data, str):
-                                    final_url = link_data
-                                elif isinstance(link_data, list) and len(link_data) > 0:
-                                    final_url = link_data[0].get("url", "")
-                                
-                                if final_url:
-                                    final_url = normalize_play_url(final_url)
-                                    p_display_name = "爱奇艺" if platform == "iqiyi" else ("腾讯视频" if platform == "qq" else "优酷")
-                                    results.append({
-                                        "title": raw_title,
-                                        "url": final_url,
-                                        "cover": cover,
-                                        "desc": desc,
-                                        "category": cat_name,
-                                        "platform": platform,
-                                        "platform_name": p_display_name,
-                                        "year": year
-                                    })
+                            p_display_name = "爱奇艺" if platform == "iqiyi" else ("腾讯视频" if platform == "qq" else ("优酷" if platform == "youku" else "影视"))
+                            item = await build_item(platform, target_key, p_display_name)
+                            if item:
+                                results.append(item)
                         else:
-                            # 全网聚合模式：遍历三大主流平台
-                            for p_key, (source_key, p_display) in platform_code_map.items():
-                                if source_key in playlinks:
-                                    link_data = playlinks[source_key]
-                                    final_url = ""
-                                    if isinstance(link_data, str):
-                                        final_url = link_data
-                                    elif isinstance(link_data, list) and len(link_data) > 0:
-                                        final_url = link_data[0].get("url", "")
-
-                                    if final_url:
-                                        final_url = normalize_play_url(final_url)
-                                        results.append({
-                                            "title": raw_title,
-                                            "url": final_url,
-                                            "cover": cover,
-                                            "desc": desc,
-                                            "category": cat_name,
-                                            "platform": p_key,
-                                            "platform_name": p_display,
-                                            "year": year
-                                        })
+                            # 全网聚合模式：遍历各大主流平台
+                            for p_k, (s_k, p_disp) in platform_code_map.items():
+                                item = await build_item(p_k, s_k, p_disp)
+                                if item:
+                                    results.append(item)
                     break
         except Exception as e:
             if attempt == 1:

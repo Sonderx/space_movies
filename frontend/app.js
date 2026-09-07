@@ -7,6 +7,8 @@ const state = {
   currentPlatform: 'all',
   currentRoute: 'https://jx.xmflv.com/?url=',
   currentVideo: null,
+  currentEpisodeIndex: 0,
+  currentEpisodeUrl: '',
   history: []
 };
 
@@ -30,6 +32,13 @@ const elements = {
   refreshPlayerBtn: document.getElementById('refreshPlayerBtn'),
   openOriginalBtn: document.getElementById('openOriginalBtn'),
   closePlayerBtn: document.getElementById('closePlayerBtn'),
+  
+  // 选集组件
+  episodesSection: document.getElementById('episodesSection'),
+  episodesTotalBadge: document.getElementById('episodesTotalBadge'),
+  currentEpisodeStatus: document.getElementById('currentEpisodeStatus'),
+  episodesGrid: document.getElementById('episodesGrid'),
+  toastNotification: document.getElementById('toastNotification'),
   
   // 直连与线路
   routeSelect: document.getElementById('routeSelect'),
@@ -106,9 +115,9 @@ function bindEvents() {
   // 线路切换
   elements.routeSelect.addEventListener('change', (e) => {
     state.currentRoute = e.target.value;
-    if (state.currentVideo && elements.videoIframe.src) {
-      // 重新加载播放器
-      elements.videoIframe.src = state.currentRoute + encodeURIComponent(state.currentVideo.url);
+    const playTarget = state.currentEpisodeUrl || (state.currentVideo ? state.currentVideo.url : '');
+    if (playTarget && elements.videoIframe.src) {
+      elements.videoIframe.src = state.currentRoute + encodeURIComponent(playTarget);
     }
   });
 
@@ -125,17 +134,20 @@ function bindEvents() {
     elements.playerSection.classList.add('hidden');
     elements.videoIframe.src = '';
     state.currentVideo = null;
+    state.currentEpisodeUrl = '';
   });
 
   elements.refreshPlayerBtn.addEventListener('click', () => {
-    if (state.currentVideo) {
-      elements.videoIframe.src = state.currentRoute + encodeURIComponent(state.currentVideo.url);
+    const playTarget = state.currentEpisodeUrl || (state.currentVideo ? state.currentVideo.url : '');
+    if (playTarget) {
+      elements.videoIframe.src = state.currentRoute + encodeURIComponent(playTarget);
     }
   });
 
   elements.openOriginalBtn.addEventListener('click', () => {
-    if (state.currentVideo && state.currentVideo.url) {
-      window.open(state.currentVideo.url, '_blank');
+    const playTarget = state.currentEpisodeUrl || (state.currentVideo ? state.currentVideo.url : '');
+    if (playTarget) {
+      window.open(playTarget, '_blank');
     }
   });
 
@@ -247,12 +259,114 @@ function renderResults(items) {
   });
 }
 
+// 全局 Toast 提示
+let toastTimer = null;
+function showToast(message) {
+  if (!elements.toastNotification) return;
+  elements.toastNotification.innerText = message;
+  elements.toastNotification.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    elements.toastNotification.classList.add('hidden');
+  }, 2800);
+}
+
+// 查找匹配的观看历史记录
+function findInHistory(video) {
+  if (!video) return null;
+  const vTitle = (video.title || '').trim();
+  return state.history.find(h => {
+    if (vTitle && h.title && h.title.trim() === vTitle) return true;
+    if (video.url && h.url && video.url === h.url) return true;
+    const m1 = (video.url || '').match(/\/cover\/([a-zA-Z0-9]+)/);
+    const m2 = (h.url || '').match(/\/cover\/([a-zA-Z0-9]+)/);
+    if (m1 && m2 && m1[1] === m2[1]) return true;
+    return false;
+  }) || null;
+}
+
+// 保存/更新观看历史
+function saveWatchHistory(item) {
+  // 根据影片名与地址去重
+  state.history = state.history.filter(h => {
+    if (item.title && h.title && item.title.trim() === h.title.trim()) return false;
+    if (item.url && h.url && item.url === h.url) return false;
+    const m1 = (item.url || '').match(/\/cover\/([a-zA-Z0-9]+)/);
+    const m2 = (h.url || '').match(/\/cover\/([a-zA-Z0-9]+)/);
+    if (m1 && m2 && m1[1] === m2[1]) return false;
+    return true;
+  });
+
+  state.history.unshift(item);
+
+  // 最多保存 30 条记录
+  if (state.history.length > 30) {
+    state.history = state.history.slice(0, 30);
+  }
+
+  try {
+    localStorage.setItem('movie_watch_history', JSON.stringify(state.history));
+  } catch (e) {}
+}
+
+// 渲染剧集选集面板
+function renderEpisodesSection(episodes, activeIndex) {
+  if (!elements.episodesSection) return;
+
+  if (!episodes || episodes.length <= 1) {
+    elements.episodesSection.classList.add('hidden');
+    return;
+  }
+
+  elements.episodesSection.classList.remove('hidden');
+  elements.episodesTotalBadge.innerText = `共 ${episodes.length} 集`;
+  const curEp = episodes[activeIndex];
+  const curName = curEp ? curEp.title : `第${activeIndex + 1}集`;
+  elements.currentEpisodeStatus.innerText = `当前播放：${curName}`;
+
+  elements.episodesGrid.innerHTML = '';
+  episodes.forEach((ep, idx) => {
+    const btn = document.createElement('button');
+    btn.className = `episode-btn ${idx === activeIndex ? 'active' : ''}`;
+    // 简写按钮文字（如 "第1集" 简写为 "1"，保留完整 title 悬停提示）
+    const shortLabel = ep.title.replace(/^第(\d+)集$/, '$1');
+    btn.innerText = shortLabel;
+    btn.title = ep.title;
+
+    btn.addEventListener('click', () => {
+      if (idx !== state.currentEpisodeIndex) {
+        playVideo(state.currentVideo, idx);
+      }
+    });
+
+    elements.episodesGrid.appendChild(btn);
+  });
+}
+
+// 异步补充拉取分集数据
+async function fetchEpisodesForVideo(video, currentUrl) {
+  try {
+    const resp = await fetch(`/api/episodes?url=${encodeURIComponent(currentUrl)}`);
+    const data = await resp.json();
+    if (data.code === 200 && data.episodes && data.episodes.length > 0) {
+      video.episodes = data.episodes;
+      const hist = findInHistory(video);
+      if (hist) {
+        hist.episodes = data.episodes;
+        saveWatchHistory(hist);
+      }
+      renderEpisodesSection(data.episodes, state.currentEpisodeIndex);
+    }
+  } catch (e) {
+    console.warn('Async fetch episodes failed:', e);
+  }
+}
+
 // 启动播放流程
-async function playVideo(video) {
+async function playVideo(video, forcedEpisodeIndex = null) {
   state.currentVideo = video;
 
   // 更新播放器标题与角标
-  elements.playerVideoTitle.innerText = video.title;
   elements.playerPlatformBadge.className = `platform-badge ${getPlatformBadgeClass(video.platform)}`;
   elements.playerPlatformBadge.innerText = video.platform_name || getPlatformName(video.platform);
 
@@ -260,32 +374,88 @@ async function playVideo(video) {
   elements.playerSection.classList.remove('hidden');
   elements.playerSection.scrollIntoView({ behavior: 'smooth' });
 
-  // 规范化与解析 URL
+  // 检查是否在历史记录中
+  const historyItem = findInHistory(video);
+
+  // 整理分集列表
+  let episodes = (video.episodes && video.episodes.length > 0)
+    ? video.episodes
+    : (historyItem && historyItem.episodes && historyItem.episodes.length > 0)
+      ? historyItem.episodes
+      : [];
+
+  let targetIndex = 0;
   let targetUrl = video.url;
-  try {
-    // 异步向后端确认真实播放页链接（如专辑页转换）
-    const resolveResp = await fetch(`/api/resolve?url=${encodeURIComponent(targetUrl)}`);
-    const resolveData = await resolveResp.json();
-    if (resolveData.code === 200 && resolveData.resolved_url) {
-      targetUrl = resolveData.resolved_url;
-      state.currentVideo.url = targetUrl;
+  let episodeTitle = '第1集';
+
+  if (forcedEpisodeIndex !== null) {
+    // 1. 用户点击了指定的选集按钮
+    targetIndex = forcedEpisodeIndex;
+    if (episodes[targetIndex]) {
+      targetUrl = episodes[targetIndex].url;
+      episodeTitle = episodes[targetIndex].title;
     }
-  } catch (e) {
-    console.warn('URL auto-resolve failed, using direct URL:', e);
+  } else if (historyItem && historyItem.lastEpisodeUrl) {
+    // 2. 存在历史记录：打开上次观看的集数！
+    targetIndex = historyItem.lastEpisodeIndex ?? 0;
+    targetUrl = historyItem.lastEpisodeUrl;
+    episodeTitle = historyItem.lastEpisodeName || `第${targetIndex + 1}集`;
+    showToast(`🎬 欢迎回来！已为您续播至上次观看的【${episodeTitle}】`);
+  } else {
+    // 3. 从未看过或没有历史记录：默认第 1 集！
+    targetIndex = 0;
+    if (episodes.length > 0) {
+      targetUrl = episodes[0].url;
+      episodeTitle = episodes[0].title;
+    } else if (video.first_episode_url) {
+      targetUrl = video.first_episode_url;
+    }
+    showToast(`🎬 正在为您从【第1集】开始播放`);
+  }
+
+  state.currentEpisodeIndex = targetIndex;
+  state.currentEpisodeUrl = targetUrl;
+  elements.playerVideoTitle.innerText = `${video.title} · ${episodeTitle}`;
+
+  // 规范化与处理爱奇艺详情专辑页
+  if (targetUrl.includes('iqiyi.com/a_')) {
+    try {
+      const resolveResp = await fetch(`/api/resolve?url=${encodeURIComponent(targetUrl)}`);
+      const resolveData = await resolveResp.json();
+      if (resolveData.code === 200 && resolveData.resolved_url) {
+        targetUrl = resolveData.resolved_url;
+        state.currentEpisodeUrl = targetUrl;
+      }
+    } catch (e) {
+      console.warn('URL auto-resolve failed:', e);
+    }
   }
 
   // 拼接解析线路并载入 iframe
   const parserEndpoint = state.currentRoute;
   elements.videoIframe.src = parserEndpoint + encodeURIComponent(targetUrl);
 
-  // 添加到本地播放历史
-  addToHistory({
+  // 保存/更新到本地播放历史
+  saveWatchHistory({
     title: video.title,
-    url: targetUrl,
+    url: video.url,
     cover: video.cover,
     platform: video.platform,
+    platform_name: video.platform_name || getPlatformName(video.platform),
+    lastEpisodeIndex: targetIndex,
+    lastEpisodeName: episodeTitle,
+    lastEpisodeUrl: targetUrl,
+    episodes: episodes,
     time: new Date().toLocaleString()
   });
+
+  // 渲染分集面板
+  renderEpisodesSection(episodes, targetIndex);
+
+  // 若暂无分集列表且为腾讯视频等平台，异步尝试拉取全部分集
+  if (episodes.length === 0 && (targetUrl.includes('v.qq.com') || (video.url && video.url.includes('v.qq.com')))) {
+    fetchEpisodesForVideo(video, targetUrl || video.url);
+  }
 }
 
 // 处理直接粘贴 URL 解析
@@ -314,16 +484,18 @@ async function handleDirectPlay() {
   const customVideo = {
     title: '自定义解析视频',
     url: directUrl,
+    first_episode_url: directUrl,
     cover: '',
     platform: platform,
-    platform_name: platformName
+    platform_name: platformName,
+    episodes: []
   };
 
   await playVideo(customVideo);
   elements.directUrlInput.value = '';
 }
 
-// 历史记录管理
+// 历史记录加载
 function loadHistory() {
   try {
     const raw = localStorage.getItem('movie_watch_history');
@@ -335,21 +507,7 @@ function loadHistory() {
   }
 }
 
-function addToHistory(item) {
-  // 去重 (移至第一位)
-  state.history = state.history.filter(h => h.url !== item.url);
-  state.history.unshift(item);
-
-  // 最多保存 30 条记录
-  if (state.history.length > 30) {
-    state.history = state.history.slice(0, 30);
-  }
-
-  try {
-    localStorage.setItem('movie_watch_history', JSON.stringify(state.history));
-  } catch (e) {}
-}
-
+// 渲染侧边抽屉历史记录列表
 function renderHistoryDrawer() {
   elements.historyList.innerHTML = '';
   if (state.history.length === 0) {
@@ -361,12 +519,18 @@ function renderHistoryDrawer() {
     const div = document.createElement('div');
     div.className = 'history-item';
     const thumb = item.cover || 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=200&auto=format&fit=crop&q=60';
+    const epName = item.lastEpisodeName || '第1集';
+    const platformClass = getPlatformBadgeClass(item.platform);
+    const platformName = item.platform_name || getPlatformName(item.platform);
 
     div.innerHTML = `
       <img class="history-thumb" src="${thumb}" alt="${item.title}" onerror="this.src='https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=200&auto=format&fit=crop&q=60'" />
       <div class="history-details">
         <h5 class="history-title" title="${item.title}">${item.title}</h5>
-        <div style="font-size: 0.75rem; color: var(--accent-cyan);">${getPlatformName(item.platform)}</div>
+        <div class="history-meta">
+          <span class="platform-badge ${platformClass}" style="padding: 0.1rem 0.45rem; font-size: 0.72rem;">${platformName}</span>
+          <span class="history-ep-info">上次看到：${epName}</span>
+        </div>
         <span class="history-time">${item.time}</span>
       </div>
     `;

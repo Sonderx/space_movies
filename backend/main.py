@@ -6,9 +6,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 try:
-    from scraper import search_aggregated, search_tencent_playwright, resolve_album_to_play_url, normalize_play_url
+    from scraper import search_aggregated, search_tencent_playwright, resolve_album_to_play_url, normalize_play_url, fetch_qq_episodes
 except ImportError:
-    from backend.scraper import search_aggregated, search_tencent_playwright, resolve_album_to_play_url, normalize_play_url
+    from backend.scraper import search_aggregated, search_tencent_playwright, resolve_album_to_play_url, normalize_play_url, fetch_qq_episodes
 
 app = FastAPI(
     title="聚合视频搜索与解析播放服务",
@@ -110,6 +110,28 @@ async def resolve_url(
         "original_url": url,
         "resolved_url": final_url,
         "xmflv_url": f"https://jx.xmflv.com/?url={final_url}"
+    }
+
+@app.get("/api/episodes")
+async def get_episodes(
+    url: str = Query(..., description="视频的播放链接或合集链接")
+):
+    """
+    动态获取视频的所有分集列表（正序排列）
+    """
+    if not url or not url.strip():
+        return {"code": 400, "message": "URL 不能为空", "episodes": []}
+
+    url = url.strip()
+    eps = []
+    if "v.qq.com" in url:
+        eps = await fetch_qq_episodes(url)
+
+    return {
+        "code": 200,
+        "url": url,
+        "count": len(eps),
+        "episodes": eps
     }
 
 # 挂载前端静态文件目录
